@@ -1,0 +1,25 @@
+// Copyright 2019 TiVo Inc. All rights reserved.
+
+buildscript {
+  repositories {
+    // uncomment to use local repo when testing tivo-docker plugin
+    // maven { url "file://${projectDir}/../repo" }
+    maven {
+      url 'http://repo-vip.tivo.com:8081/artifactory/plugins-release'
+    }
+  }
+
+  dependencies {
+    classpath 'com.tivo:tivo-docker-plugin:0.21'
+  }
+}
+
+wrapper {
+  gradleVersion = '5.5.1'
+}
+
+apply plugin: 'tivo-docker'
+
+tivoDocker {
+  imageName = 'eks-auth-proxy'
+}
