@@ -32,6 +32,11 @@ proxy.on('proxyReq', (proxyReq, req) => {
 // Log errors
 proxy.on('error', log.error.bind(log));
 
+// Remove the CSP header, which causes problems for the dashboard over https
+proxy.on('proxyRes', function (proxyRes, req, res) {
+    res.removeHeader('Content-Security-Policy')
+});
+
 const proxyMiddleware = (ctx) => {
     ctx.respond = false; // Required to prevent koa from sending out headers
     proxy.web(ctx.req, ctx.res);

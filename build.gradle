@@ -10,7 +10,7 @@ buildscript {
   }
 
   dependencies {
-    classpath 'com.tivo:tivo-docker-plugin:0.21'
+    classpath 'com.tivo:tivo-docker-plugin:0.28.83'
   }
 }
 
@@ -22,4 +22,6 @@ apply plugin: 'tivo-docker'
 
 tivoDocker {
   imageName = 'eks-auth-proxy'
+  ownerEmail = 'inception-scrum@xperi.com'
+  description = 'The IAM to EKS authentication bridging proxy'
 }
