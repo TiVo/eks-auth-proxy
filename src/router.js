@@ -29,39 +29,47 @@ router.get(`${loginUrl}/check`, async (ctx) => {
 });
 
 // Start OIDC authentication request
-router.get(
-    oidc.getBasePath(),
-    oidc.dynamicStrategyMiddleware,
-    passport.authenticate('oidc')
+router.get(oidc.getBasePath(), oidc.dynamicStrategyMiddleware, (ctx) =>
+    passport.authenticate('oidc', {
+        callbackURL: ctx.state.oidcCallbackUrl,
+    })(ctx)
 );
 
 // OIDC authentication callback
 router.get(oidc.getCallbackPath(), (ctx) =>
-    passport.authenticate('oidc', async (error, user, info) => {
-        // If authentication failed, render an error message
-        if (error || user === false) {
-            const renderContext = {
-                error,
-                ...info,
-                loginUrl,
-            };
+    passport.authenticate(
+        'oidc',
+        {
+            callbackURL: `${ctx.protocol}://${
+                ctx.host
+            }${oidc.getCallbackPath()}`,
+        },
+        async (error, user, info) => {
+            // If authentication failed, render an error message
+            if (error || user === false) {
+                const renderContext = {
+                    error,
+                    ...info,
+                    loginUrl,
+                };
 
-            renderContext.message =
-                renderContext.message ||
-                'An unexpected error occured while trying to log you in.';
+                renderContext.message =
+                    renderContext.message ||
+                    'An unexpected error occured while trying to log you in.';
 
-            if (renderContext.error) {
-                log.error(renderContext.error);
+                if (renderContext.error) {
+                    log.error(renderContext.error);
+                }
+
+                await ctx.render('error', renderContext);
+                return;
             }
 
-            await ctx.render('error', renderContext);
-            return;
+            // Otherwise log the user in and redirect to the root URL
+            await ctx.login(user);
+            ctx.redirect('/');
         }
-
-        // Otherwise log the user in and redirect to the root URL
-        await ctx.login(user);
-        ctx.redirect('/');
-    })(ctx)
+    )(ctx)
 );
 
 module.exports = router;

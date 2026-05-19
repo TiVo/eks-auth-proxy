@@ -1,4 +1,3 @@
-const { Issuer, Strategy, custom } = require('openid-client');
 const { getEksAuthToken, getTemporaryAwsCredentials } = require('./aws');
 const {
     clientSecret,
@@ -10,14 +9,26 @@ const {
     ignoreEmailVerification,
 } = require('./config');
 
-// Set global request timeout for the OIDC library. This is relatively high as some
-// providers can take a while to respond.
-// https://github.com/panva/node-openid-client/blob/main/docs/README.md#customizing-http-requests
-custom.setHttpOptionsDefaults({
-    timeout: 30000,
-});
-
 let passportStrategy;
+let oidcConfig;
+let openidClientPromise;
+let openidClientPassportPromise;
+// eslint-disable-next-line no-new-func
+const dynamicImport = new Function('modulePath', 'return import(modulePath)');
+
+const getOpenIdClient = async () => {
+    if (openidClientPromise === undefined) {
+        openidClientPromise = dynamicImport('openid-client');
+    }
+    return openidClientPromise;
+};
+
+const getOpenIdClientPassport = async () => {
+    if (openidClientPassportPromise === undefined) {
+        openidClientPassportPromise = dynamicImport('openid-client/passport');
+    }
+    return openidClientPassportPromise;
+};
 
 const getBasePath = () => `${loginUrl}/oauth`;
 const getCallbackPath = () => `${getBasePath()}/callback`;
@@ -25,12 +36,20 @@ const getRedirectUrl = (ctx) =>
     `${ctx.protocol}://${ctx.host}${getCallbackPath()}`;
 
 const getClient = async () => {
-    const issuer = await Issuer.discover(oidcIssuer);
+    if (oidcConfig !== undefined) {
+        return oidcConfig;
+    }
 
-    return new issuer.Client({
-        client_id: clientId,
-        client_secret: clientSecret,
-    });
+    const openidClient = await getOpenIdClient();
+    oidcConfig = await openidClient.discovery(
+        new URL(oidcIssuer),
+        clientId,
+        clientSecret,
+        undefined,
+        { timeout: 30 }
+    );
+
+    return oidcConfig;
 };
 
 const getAssumeRoleErrorMessage = (error, roleArn) => {
@@ -69,8 +88,28 @@ const validateEmail = (userinfo) => {
 // Take the info returned from the OIDC provider and return a user object
 // This cannot be an arrow function as we rely on `this` to be the strategy that
 // calls this function
-async function handleAuthenticationSuccess(tokenset, userinfo, done) {
+async function handleAuthenticationSuccess(req, tokenset, done) {
     let awsCredentials;
+    const openidClient = await getOpenIdClient();
+
+    const idTokenClaims = tokenset.claims ? tokenset.claims() : {};
+    let userinfo = { ...idTokenClaims };
+
+    if (tokenset.access_token !== undefined) {
+        const expectedSubject =
+            idTokenClaims && idTokenClaims.sub
+                ? idTokenClaims.sub
+                : openidClient.skipSubjectCheck;
+        try {
+            userinfo = await openidClient.fetchUserInfo(
+                await getClient(),
+                tokenset.access_token,
+                expectedSubject
+            );
+        } catch (error) {
+            return done(error);
+        }
+    }
 
     // Check the email address
     const { emailValid, emailError } = validateEmail(userinfo);
@@ -83,12 +122,15 @@ async function handleAuthenticationSuccess(tokenset, userinfo, done) {
         awsCredentials = await getTemporaryAwsCredentials(
             userinfo.email,
             tokenset.id_token,
-            this.iamRole
+            req.session.selectedIamRole || iamRoles[0]
         );
     } catch (e) {
         return done(null, false, {
             error: e,
-            message: getAssumeRoleErrorMessage(e, this.iamRole || iamRoles[0]),
+            message: getAssumeRoleErrorMessage(
+                e,
+                req.session.selectedIamRole || iamRoles[0]
+            ),
         });
     }
 
@@ -104,15 +146,11 @@ const getPassportStrategy = async () => {
         return Promise.resolve(passportStrategy);
     }
 
-    const client = await getClient();
-
-    const params = { scope: 'openid email' };
-    const usePKCE = true; // optional, defaults to false, when true the code_challenge_method will be
-    // resolved from the issuer configuration, instead of true you may provide
-    // any of the supported values directly, i.e. "S256" (recommended) or "plain"
+    const { Strategy } = await getOpenIdClientPassport();
+    const config = await getClient();
 
     passportStrategy = new Strategy(
-        { client, params, usePKCE },
+        { config, scope: 'openid email', passReqToCallback: true },
         handleAuthenticationSuccess
     );
 
@@ -122,14 +160,16 @@ const getPassportStrategy = async () => {
 // Sets the redirect_uri dynamically based on the host and uses the `iam_role` query parameter
 // to dynamically set the role to be assumed
 const dynamicStrategyMiddleware = async (ctx, next) => {
-    const strategy = await getPassportStrategy();
-    // eslint-disable-next-line no-underscore-dangle
-    strategy._params.redirect_uri = getRedirectUrl(ctx);
-
+    const [defaultIamRole] = iamRoles;
     const roleIndex = parseInt(ctx.query.iam_role, 10);
     if (!Number.isNaN(roleIndex)) {
-        strategy.iamRole = iamRoles[roleIndex];
+        const [selectedIamRole] = iamRoles.slice(roleIndex);
+        ctx.session.selectedIamRole = selectedIamRole || defaultIamRole;
+    } else {
+        ctx.session.selectedIamRole = defaultIamRole;
     }
+
+    ctx.state.oidcCallbackUrl = getRedirectUrl(ctx);
 
     await next();
 };
