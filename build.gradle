@@ -5,7 +5,7 @@ buildscript {
     // uncomment to use local repo when testing tivo-docker plugin
     // maven { url "file://${projectDir}/../repo" }
     maven {
-      url 'http://repo-vip.tivo.com:8081/artifactory/plugins-release'
+      url 'https://repo-vip.tivo.com:8443/artifactory/plugins-release'
     }
   }
 
