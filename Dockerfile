@@ -6,8 +6,8 @@ RUN yarn global add pm2 -g
 
 COPY package.json yarn.lock /app/
 
-RUN yarn install --ignore-engines
+RUN yarn install
 
 COPY . /app
 
-CMD ["./start"]
+CMD ./start
