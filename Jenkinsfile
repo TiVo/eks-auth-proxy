@@ -1,6 +1,6 @@
 @Library('tivoPipeline') _
 
-emailBreaks('inception-scrum@tivo.com') {
+emailBreaks {
     node('docker') {
         stage('Code Checkout') {
             checkout scm
